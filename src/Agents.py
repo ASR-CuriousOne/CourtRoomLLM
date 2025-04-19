@@ -2,6 +2,8 @@ import os
 from groq import Groq
 import pandas as pd
 from dotenv import load_dotenv
+import re
+import json
 
 # Load environment variables (Groq API key)
 load_dotenv()
@@ -9,7 +11,7 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # Base Agent Class
 class Agent:
-    def __init__(self, role,summary_case = '' ,personality = None ,model="meta-llama/llama-4-maverick-17b-128e-instruct"):
+    def __init__(self, role,summary_case = '' ,personality = None ,model="meta-llama/llama-4-scout-17b-16e-instruct"):
         self.role = role
         self.model = model
         self.case_summary = summary_case
@@ -17,12 +19,12 @@ class Agent:
 
         
 
-    def generate_response(self, prompt, temperature=0.7, max_tokens=500):
+    def generate_response(self, prompt, temperature=0.7, max_tokens=200):
         """Generate a response using the Groq API."""
 
         if(self.personality != None):
             prompt += f" Personality and style of response should be of following: {self.personality}. \
-                Only text as roleplay should be included."
+                Only text as roleplay should be included. Response should be only 100 words"
 
         try:
             response = client.chat.completions.create(
@@ -55,17 +57,17 @@ class Lawyer(Agent):
         prompt = f"As the {self.role}, interrogate the witness based on their statement: '{witness_statement}'."
         return self.generate_response(prompt)
 
+    def call_witness(self, summary, trial_log):
+        prompt = f"As the {self.role}, based on the case summary: {summary} and trial log: {trial_log}, suggest a witness to call (e.g., bystander, expert) and provide a brief reason (50 words)."
+        return self.generate_response(prompt, max_tokens=70)
+
 class Judge(Agent):
     def deliberate(self, trial_log):
         prompt = (
             f"As the Judge, review the following trial log: {trial_log}. "
-            f"Provide a clear verdict (e.g., 'Guilty', 'Not Guilty', 'In Favor of Plaintiff', or 'In Favor of Defendant') "
-            f"followed by a concise reasoning (150–250 words) explaining the decision. "
+            f"Provide a clear verdict with only a single word between GRANTED and DENIED in the last line only"
             f"The reasoning must be based solely on the evidence, witness statements, and applicable legal principles presented in the trial log, "
-            f"and it should address the key factors influencing the verdict in a logical and impartial manner. "
-            f"Use a formal, authoritative, and neutral tone, avoiding bias or emotional language. "
-            f"Do not include introductory text or extraneous commentary beyond the verdict and reasoning."
-            f"For verdict give a proper sentence"
+            
         )
         return self.generate_response(prompt)
 
@@ -93,6 +95,7 @@ class CourtroomSimulation:
             "judge": judge
         }
         self.witnesses = []
+        self.max_witnesses_per_lawyer = 2 
         self.log_file_path = log_file_path
 
     def log(self, entry):
@@ -100,7 +103,9 @@ class CourtroomSimulation:
         print(entry)
         print("-----")
         self.trial_log.append(entry)
+        self.trial_log.append("\n-----\n")
 
+   
     def run_opening_statements(self):
         self.log("\n--- Opening Statements ---")
         for lawyer in ["prosecution_lawyer", "defense_lawyer"]:
@@ -135,11 +140,18 @@ class CourtroomSimulation:
         self.log("\n--- Judge’s Ruling ---")
         verdict = self.agents["judge"].deliberate("\n".join(self.trial_log))
         self.log(f"Judge: {verdict}")
+        return verdict
 
     def simulate_trial(self):
         """Run the full trial simulation."""
         self.run_opening_statements()
         self.run_interrogation()
         self.run_closing_statements()
-        self.run_ruling()
-        return "\n".join(self.trial_log)
+        ver = self.run_ruling()
+        if "GRANTED" in ver:
+            return 1
+        elif "DENIED" in ver:
+            return 0
+        else:
+            return "Neither GRANTED nor DENIED found"
+        
